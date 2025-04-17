@@ -1,16 +1,24 @@
-export default async function handler(req, res) {
-  const rpcRes = await fetch('https://rpc.quai.network/cyprus1', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      id: 1,
-      jsonrpc: "2.0",
-      method: "quai_qiToQuai",
-      params: ["0x1", "latest"]
-    })
-  });
+const fetch = require('node-fetch');
 
-  const data = await rpcRes.json();
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.status(200).json(data);
-}
+module.exports = async (req, res) => {
+  const url = 'https://rpc.quai.network/cyprus1';
+  const body = {
+    id: 1,
+    jsonrpc: '2.0',
+    method: 'quai_qiToQuai',
+    params: ['0x3e8', 'latest']
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    const data = await response.json();
+    res.status(200).json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch Qi to Quai conversion data' });
+  }
+};
