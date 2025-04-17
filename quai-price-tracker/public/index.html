@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>QUAI & QI Tracker</title>
+  <style>
+    body { font-family: sans-serif; padding: 30px; }
+    .label { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>QUAI & QI Live Tracker</h1>
+  <p><span class="label">QUAI Price (USD):</span> <span id="quai-usd">Loading...</span></p>
+  <p><span class="label">QI Price (USD):</span> <span id="qi-usd">Loading...</span></p>
+  <p><span class="label">1 QI =</span> <span id="qi-to-quai">Loading...</span> QUAI</p>
+  <p><span class="label">1 QUAI =</span> <span id="quai-to-qi">Loading...</span> QI</p>
+
+  <script>
+    async function updatePrices() {
+      try {
+        const resQuai = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=quai-network&vs_currencies=usd');
+        const quaiUsd = (await resQuai.json())['quai-network'].usd;
+
+        const resQi = await fetch('/api/qiToQuai');
+        const qiToQuai = parseFloat((await resQi.json()).result) / 1e18;
+        const quaiToQi = 1 / qiToQuai;
+        const qiUsd = qiToQuai * quaiUsd;
+
+        document.getElementById('quai-usd').textContent = `$${quaiUsd.toFixed(4)}`;
+        document.getElementById('qi-usd').textContent = `$${qiUsd.toFixed(6)}`;
+        document.getElementById('qi-to-quai').textContent = qiToQuai.toFixed(8);
+        document.getElementById('quai-to-qi').textContent = quaiToQi.toFixed(2);
+      } catch (err) {
+        console.error('Error:', err);
+      }
+    }
+
+    updatePrices();
+    setInterval(updatePrices, 60000);
+  </script>
+</body>
+</html>
