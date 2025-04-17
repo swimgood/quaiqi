@@ -4,9 +4,14 @@
     {
       "src": "api/qiToQuai.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
-    { "src": "/api/qiToQuai", "dest": "/api/qiToQuai.js" }
+    { "src": "/api/qiToQuai", "dest": "/api/qiToQuai.js" },
+    { "src": "/", "dest": "/index.html" }
   ]
 }
