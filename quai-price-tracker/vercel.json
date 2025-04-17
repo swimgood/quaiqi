@@ -1,3 +1,0 @@
-{
-  "rewrites": [{ "source": "/qiToQuai", "destination": "/api/qiToQuai" }]
-}
