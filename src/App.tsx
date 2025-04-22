@@ -5,6 +5,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import SlippageDisplay from "@/components/SlippageDisplay" // adjust path as needed
+
+function App() {
+  return (
+    <main className="flex items-center justify-center min-h-screen bg-black">
+      <SlippageDisplay />
+    </main>
+  )
+}
+
+export default App
+
 
 const queryClient = new QueryClient();
 
