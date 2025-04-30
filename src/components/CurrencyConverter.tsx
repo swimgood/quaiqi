@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { ArrowDownUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +10,12 @@ interface CurrencyConverterProps {
   qiToQuaiRate?: string;
   quaiToQiRate?: string;
 }
+
+// Slippage configuration
+const SLIPPAGE_CONFIG = {
+  QI_TO_QUAI: 1.5, // Higher slippage for QI → QUAI
+  QUAI_TO_QI: 0.5, // Lower slippage for QUAI → QI
+};
 
 export function CurrencyConverter({
   qiToQuaiRate,
@@ -30,17 +35,40 @@ export function CurrencyConverter({
   });
   const [isCalculating, setIsCalculating] = useState(false);
 
+  // Get current slippage based on conversion direction
+  const getCurrentSlippage = () => {
+    return fromCurrency === "QUAI" 
+      ? SLIPPAGE_CONFIG.QUAI_TO_QI 
+      : SLIPPAGE_CONFIG.QI_TO_QUAI;
+  };
+
   // Calculate conversion when amount or currencies change
   useEffect(() => {
     const calculateConversion = async () => {
       if (amount && !isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
         setIsCalculating(true);
+        
+        // Get conversion direction and slippage
+        const direction = fromCurrency === "QUAI" ? "quaiToQi" : "qiToQuai";
+        const slippage = getCurrentSlippage();
+        
+        // Call API with direction and slippage info
         const conversionResult = await calculateConversionAmount(
           fromCurrency,
           toCurrency,
-          amount
+          amount,
+          {
+            direction,
+            slippage
+          }
         );
-        setResult(conversionResult);
+        
+        // Update result with direction-specific slippage
+        setResult({
+          ...conversionResult,
+          slippage: `${slippage}%`,
+        });
+        
         setIsCalculating(false);
       } else {
         setResult({
@@ -139,7 +167,9 @@ export function CurrencyConverter({
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Slippage:</span>
-                <span className="font-medium">{result.slippage}</span>
+                <span className="font-medium">
+                  {result.slippage} ({fromCurrency} → {toCurrency})
+                </span>
               </div>
             </div>
           </div>
