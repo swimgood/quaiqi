@@ -23,6 +23,12 @@ interface ConversionOptions {
   slippage?: number;
 }
 
+interface FlowData {
+  quaiToQiVolume: number;
+  qiToQuaiVolume: number;
+  timestamp: number;
+}
+
 // Last known values to use as fallbacks
 let lastQiToQuaiRate: string | null = null;
 let lastQuaiToQiRate: string | null = null;
@@ -34,11 +40,60 @@ let lastUpdatedTimestamp: number = Date.now();
 let qiPriceHistory: Array<{ timestamp: number; price: number }> = [];
 let quaiPriceHistory: Array<{ timestamp: number; price: number }> = [];
 
-// Slippage configuration
-const DEFAULT_SLIPPAGE = {
-  QI_TO_QUAI: 1.5, // Higher slippage for QI → QUAI
-  QUAI_TO_QI: 0.5, // Lower slippage for QUAI → QI
+// Conversion flow tracking
+let flowHistory: FlowData[] = [];
+
+// Record conversion flows for slippage calculation
+export function recordConversionFlow(direction: 'quaiToQi' | 'qiToQuai', amount: number) {
+  const now = Date.now();
+  
+  flowHistory.push({
+    quaiToQiVolume: direction === 'quaiToQi' ? amount : 0,
+    qiToQuaiVolume: direction === 'qiToQuai' ? amount : 0,
+    timestamp: now
+  });
+  
+  // Keep only last 24 hours of data
+  flowHistory = flowHistory.filter(f => now - f.timestamp < 86400000);
+}
+
+// Calculate dynamic slippage based on actual flow
+const calculateDynamicSlippage = (
+  amount: number,
+  direction: 'quaiToQi' | 'qiToQuai'
+) => {
+  const now = Date.now();
+  const oneHourAgo = now - 3600000;
+  
+  // Get recent flows
+  const recentFlows = flowHistory.filter(f => f.timestamp > oneHourAgo);
+  
+  // Calculate flow ratios
+  const totalQuaiToQi = recentFlows.reduce((sum, f) => sum + f.quaiToQiVolume, 0);
+  const totalQiToQuai = recentFlows.reduce((sum, f) => sum + f.qiToQuaiVolume, 0);
+  const totalFlow = totalQuaiToQi + totalQiToQuai;
+  
+  // Base slippage (minimum)
+  let baseSlippage = direction === 'quaiToQi' ? 0.1 : 0.3;
+  
+  // Flow-based adjustment (more flow = less slippage)
+  const flowRatio = direction === 'quaiToQi' 
+    ? totalQuaiToQi / (totalFlow || 1)
+    : totalQiToQuai / (totalFlow || 1);
+  
+  const flowAdjustment = (1 - flowRatio) * 5; // Up to 5% adjustment
+  
+  // Size impact (larger trades = more slippage)
+  const sizeImpact = Math.min(amount / 10000, 5);
+  
+  // Total slippage
+  return Math.min(baseSlippage + flowAdjustment + sizeImpact, direction === 'quaiToQi' ? 3 : 10);
 };
+
+// Get flow data for graphs
+export function getFlowHistory() {
+  return flowHistory;
+}
 
 export async function fetchQiToQuai(amount = "0x3e8"): Promise<string> {
   try {
@@ -166,44 +221,46 @@ export async function calculateConversionAmount(
 ): Promise<ConversionResult> {
   try {
     const amountInDecimal = parseFloat(amountIn);
-    let amountOut: number;
-    let effectiveRate: number;
-    let slippagePercent: number;
-
+    const direction = tokenIn.toUpperCase() === "QUAI" ? 'quaiToQi' : 'qiToQuai';
+    
+    // Calculate dynamic slippage
+    const slippagePercent = calculateDynamicSlippage(amountInDecimal, direction);
+    
     if (tokenIn.toUpperCase() === "QI" && tokenOut.toUpperCase() === "QUAI") {
       const qiToQuaiRate = parseInt(lastQiToQuaiRate || "0", 16) / 10 ** 18;
       
-      // Use provided slippage or default based on direction
-      slippagePercent = options?.slippage || DEFAULT_SLIPPAGE.QI_TO_QUAI;
+      // First calculate raw conversion without slippage
+      const rawAmountOut = amountInDecimal * qiToQuaiRate;
       
-      effectiveRate = qiToQuaiRate * (1 - slippagePercent / 100);
-      amountOut = amountInDecimal * effectiveRate;
+      // Then apply slippage by reducing output amount
+      const amountOut = rawAmountOut * (1 - slippagePercent / 100);
       
       return {
         amountOut: amountOut.toFixed(6),
-        effectiveRate: effectiveRate.toFixed(6),
+        effectiveRate: (amountOut / amountInDecimal).toFixed(6),
         slippage: `${slippagePercent.toFixed(2)}%`
       };
-    } else if (tokenIn.toUpperCase() === "QUAI" && tokenOut.toUpperCase() === "QI") {
+    } 
+    else if (tokenIn.toUpperCase() === "QUAI" && tokenOut.toUpperCase() === "QI") {
       const qiToQuaiRate = parseInt(lastQiToQuaiRate || "0", 16) / 10 ** 18;
       if (qiToQuaiRate === 0) return { amountOut: "0", effectiveRate: "0", slippage: "0%" };
       
       const quaiToQiRate = 1 / qiToQuaiRate;
       
-      // Use provided slippage or default based on direction
-      slippagePercent = options?.slippage || DEFAULT_SLIPPAGE.QUAI_TO_QI;
+      // First calculate raw conversion without slippage
+      const rawAmountOut = amountInDecimal * quaiToQiRate;
       
-      effectiveRate = quaiToQiRate * (1 - slippagePercent / 100);
-      amountOut = amountInDecimal * effectiveRate;
+      // Then apply slippage by reducing output amount
+      const amountOut = rawAmountOut * (1 - slippagePercent / 100);
       
       return {
         amountOut: amountOut.toFixed(6),
-        effectiveRate: effectiveRate.toFixed(6),
+        effectiveRate: (amountOut / amountInDecimal).toFixed(6),
         slippage: `${slippagePercent.toFixed(2)}%`
       };
-    } else {
-      throw new Error("Invalid token pair");
     }
+    
+    throw new Error("Invalid token pair");
   } catch (error) {
     console.error("Error calculating conversion amount:", error);
     toast.error("Failed to calculate conversion. Please try again.");
