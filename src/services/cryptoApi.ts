@@ -18,6 +18,11 @@ interface ConversionResult {
   slippage: string;
 }
 
+interface ConversionOptions {
+  direction: 'quaiToQi' | 'qiToQuai';
+  slippage?: number;
+}
+
 // Last known values to use as fallbacks
 let lastQiToQuaiRate: string | null = null;
 let lastQuaiToQiRate: string | null = null;
@@ -28,6 +33,12 @@ let lastUpdatedTimestamp: number = Date.now();
 // Separate price history for QI and QUAI
 let qiPriceHistory: Array<{ timestamp: number; price: number }> = [];
 let quaiPriceHistory: Array<{ timestamp: number; price: number }> = [];
+
+// Slippage configuration
+const DEFAULT_SLIPPAGE = {
+  QI_TO_QUAI: 1.5, // Higher slippage for QI → QUAI
+  QUAI_TO_QI: 0.5, // Lower slippage for QUAI → QI
+};
 
 export async function fetchQiToQuai(amount = "0x3e8"): Promise<string> {
   try {
@@ -101,14 +112,11 @@ export async function fetchQuaiUsdPrice(): Promise<number> {
     lastQuaiUsdPrice = data["quai-network"].usd;
     lastUpdatedTimestamp = Date.now();
     
-    // Add to QUAI price history
-    const now = Date.now();
     quaiPriceHistory.push({ 
-      timestamp: now, 
+      timestamp: Date.now(), 
       price: lastQuaiUsdPrice 
     });
     
-    // Keep only the last 100 price points
     if (quaiPriceHistory.length > 100) {
       quaiPriceHistory = quaiPriceHistory.slice(-100);
     }
@@ -125,23 +133,17 @@ export async function calculateQiUsdPrice(
   quaiUsdPrice: number
 ): Promise<number> {
   try {
-    // Convert hex string to decimal
     const qiToQuaiDecimal = parseInt(qiToQuaiRate, 16) / 10 ** 18;
     
     if (qiToQuaiDecimal && qiToQuaiDecimal > 0) {
-      // The correct way: QI price = QUAI price * QUAI per QI
-      // Since qiToQuaiRate gives us how much QUAI you get for 1 QI
       const qiUsdPrice = quaiUsdPrice * qiToQuaiDecimal;
       lastQiUsdPrice = qiUsdPrice;
       
-      // Update QI price history (separate from QUAI)
-      const now = Date.now();
       qiPriceHistory.push({ 
-        timestamp: now, 
+        timestamp: Date.now(), 
         price: qiUsdPrice 
       });
       
-      // Keep only the last 100 price points
       if (qiPriceHistory.length > 100) {
         qiPriceHistory = qiPriceHistory.slice(-100);
       }
@@ -159,23 +161,21 @@ export async function calculateQiUsdPrice(
 export async function calculateConversionAmount(
   tokenIn: string,
   tokenOut: string,
-  amountIn: string
+  amountIn: string,
+  options?: ConversionOptions
 ): Promise<ConversionResult> {
   try {
-    // This is a simplified mock implementation
-    // In a real implementation, this would call the actual API
-    
-    // Convert the input amount to a decimal
     const amountInDecimal = parseFloat(amountIn);
-    
-    // Use the latest rates to calculate the output amount
     let amountOut: number;
     let effectiveRate: number;
-    
+    let slippagePercent: number;
+
     if (tokenIn.toUpperCase() === "QI" && tokenOut.toUpperCase() === "QUAI") {
       const qiToQuaiRate = parseInt(lastQiToQuaiRate || "0", 16) / 10 ** 18;
-      // Apply a mock slippage of 1-3% based on amount
-      const slippagePercent = Math.min(1 + amountInDecimal / 10000, 3);
+      
+      // Use provided slippage or default based on direction
+      slippagePercent = options?.slippage || DEFAULT_SLIPPAGE.QI_TO_QUAI;
+      
       effectiveRate = qiToQuaiRate * (1 - slippagePercent / 100);
       amountOut = amountInDecimal * effectiveRate;
       
@@ -185,13 +185,14 @@ export async function calculateConversionAmount(
         slippage: `${slippagePercent.toFixed(2)}%`
       };
     } else if (tokenIn.toUpperCase() === "QUAI" && tokenOut.toUpperCase() === "QI") {
-      // For QUAI to QI, we invert the rate
       const qiToQuaiRate = parseInt(lastQiToQuaiRate || "0", 16) / 10 ** 18;
       if (qiToQuaiRate === 0) return { amountOut: "0", effectiveRate: "0", slippage: "0%" };
       
       const quaiToQiRate = 1 / qiToQuaiRate;
-      // Apply a mock slippage of 1-3% based on amount
-      const slippagePercent = Math.min(1 + amountInDecimal / 1000, 3);
+      
+      // Use provided slippage or default based on direction
+      slippagePercent = options?.slippage || DEFAULT_SLIPPAGE.QUAI_TO_QI;
+      
       effectiveRate = quaiToQiRate * (1 - slippagePercent / 100);
       amountOut = amountInDecimal * effectiveRate;
       
@@ -215,11 +216,10 @@ export async function calculateConversionAmount(
 }
 
 export function getPriceHistory() {
-  // Always return QI price history instead of potentially mixing data
   if (qiPriceHistory.length === 0 && lastQiUsdPrice) {
     const now = Date.now();
     qiPriceHistory.push({
-      timestamp: now - 3600000, // 1 hour ago
+      timestamp: now - 3600000,
       price: lastQiUsdPrice
     });
     qiPriceHistory.push({
