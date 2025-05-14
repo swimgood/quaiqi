@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { hexlify } from "ethers";
 
 interface QuaiResponse {
   jsonrpc: string;
@@ -46,53 +47,68 @@ let flowHistory: FlowData[] = [];
 // Record conversion flows for slippage calculation
 export function recordConversionFlow(direction: 'quaiToQi' | 'qiToQuai', amount: number) {
   const now = Date.now();
-  
+
   flowHistory.push({
     quaiToQiVolume: direction === 'quaiToQi' ? amount : 0,
     qiToQuaiVolume: direction === 'qiToQuai' ? amount : 0,
     timestamp: now
   });
-  
+
   // Keep only last 24 hours of data
   flowHistory = flowHistory.filter(f => now - f.timestamp < 86400000);
 }
 
-// Calculate dynamic slippage based on actual flow
-const calculateDynamicSlippage = (
-  amount: number,
-  direction: 'quaiToQi' | 'qiToQuai'
-) => {
-  const now = Date.now();
-  const oneHourAgo = now - 3600000;
-  
-  // Get recent flows
-  const recentFlows = flowHistory.filter(f => f.timestamp > oneHourAgo);
-  
-  // Calculate flow ratios
-  const totalQuaiToQi = recentFlows.reduce((sum, f) => sum + f.quaiToQiVolume, 0);
-  const totalQiToQuai = recentFlows.reduce((sum, f) => sum + f.qiToQuaiVolume, 0);
-  const totalFlow = totalQuaiToQi + totalQiToQuai;
-  
-  // Base slippage (minimum)
-  let baseSlippage = direction === 'quaiToQi' ? 0.1 : 0.3;
-  
-  // Flow-based adjustment (more flow = less slippage)
-  const flowRatio = direction === 'quaiToQi' 
-    ? totalQuaiToQi / (totalFlow || 1)
-    : totalQiToQuai / (totalFlow || 1);
-  
-  const flowAdjustment = (1 - flowRatio) * 5; // Up to 5% adjustment
-  
-  // Size impact (larger trades = more slippage)
-  const sizeImpact = Math.min(amount / 10000, 5);
-  
-  // Total slippage
-  return Math.min(baseSlippage + flowAdjustment + sizeImpact, direction === 'quaiToQi' ? 3 : 10);
-};
-
 // Get flow data for graphs
 export function getFlowHistory() {
   return flowHistory;
+}
+
+export async function fetchConversionAmountAfterSlip(amount: string, direction: string): Promise<string> {
+  try {
+
+    const quaiAddress = "0x0000000000000000000000000000000000000000"
+    const qiAddress = "0x0090000000000000000000000000000000000000"
+
+    var from;
+    var to;
+    if (direction === "quaiToQi") {
+      from = quaiAddress
+      to = qiAddress
+    } else {
+      from = qiAddress
+      to = quaiAddress
+    }
+
+    var txArgs = {
+      from: from,
+      to: to,
+      value: amount,
+    }
+
+    const response = await fetch("https://rpc.quai.network/cyprus1", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "quai_calculateConversionAmount",
+        params: [txArgs],
+      }),
+    });
+
+    if (!response.ok) {
+      console.log("response was not okay")
+      throw new Error("Network response was not ok");
+    }
+
+    const data: QuaiResponse = await response.json();
+    return data.result;
+  } catch (error) {
+    console.error("Error fetching QI to QUAI rate:", error);
+    return lastQiToQuaiRate || "0";
+  }
 }
 
 export async function fetchQiToQuai(amount = "0x3e8"): Promise<string> {
@@ -166,16 +182,16 @@ export async function fetchQuaiUsdPrice(): Promise<number> {
     const data: CoinGeckoResponse = await response.json();
     lastQuaiUsdPrice = data["quai-network"].usd;
     lastUpdatedTimestamp = Date.now();
-    
-    quaiPriceHistory.push({ 
-      timestamp: Date.now(), 
-      price: lastQuaiUsdPrice 
+
+    quaiPriceHistory.push({
+      timestamp: Date.now(),
+      price: lastQuaiUsdPrice
     });
-    
+
     if (quaiPriceHistory.length > 100) {
       quaiPriceHistory = quaiPriceHistory.slice(-100);
     }
-    
+
     return lastQuaiUsdPrice;
   } catch (error) {
     console.error("Error fetching QUAI USD price:", error);
@@ -189,23 +205,23 @@ export async function calculateQiUsdPrice(
 ): Promise<number> {
   try {
     const qiToQuaiDecimal = parseInt(qiToQuaiRate, 16) / 10 ** 18;
-    
+
     if (qiToQuaiDecimal && qiToQuaiDecimal > 0) {
       const qiUsdPrice = quaiUsdPrice * qiToQuaiDecimal;
       lastQiUsdPrice = qiUsdPrice;
-      
-      qiPriceHistory.push({ 
-        timestamp: Date.now(), 
-        price: qiUsdPrice 
+
+      qiPriceHistory.push({
+        timestamp: Date.now(),
+        price: qiUsdPrice
       });
-      
+
       if (qiPriceHistory.length > 100) {
         qiPriceHistory = qiPriceHistory.slice(-100);
       }
-      
+
       return qiUsdPrice;
     }
-    
+
     return lastQiUsdPrice || (quaiUsdPrice * 16);
   } catch (error) {
     console.error("Error calculating QI USD price:", error);
@@ -215,52 +231,64 @@ export async function calculateQiUsdPrice(
 
 export async function calculateConversionAmount(
   tokenIn: string,
-  tokenOut: string,
-  amountIn: string,
-  options?: ConversionOptions
+  amountIn: bigint,
 ): Promise<ConversionResult> {
   try {
-    const amountInDecimal = parseFloat(amountIn);
     const direction = tokenIn.toUpperCase() === "QUAI" ? 'quaiToQi' : 'qiToQuai';
-    
-    // Calculate dynamic slippage
-    const slippagePercent = calculateDynamicSlippage(amountInDecimal, direction);
-    
-    if (tokenIn.toUpperCase() === "QI" && tokenOut.toUpperCase() === "QUAI") {
-      const qiToQuaiRate = parseInt(lastQiToQuaiRate || "0", 16) / 10 ** 18;
-      
-      // First calculate raw conversion without slippage
-      const rawAmountOut = amountInDecimal * qiToQuaiRate;
-      
-      // Then apply slippage by reducing output amount
-      const amountOut = rawAmountOut * (1 - slippagePercent / 100);
-      
-      return {
-        amountOut: amountOut.toFixed(6),
-        effectiveRate: (amountOut / amountInDecimal).toFixed(6),
-        slippage: `${slippagePercent.toFixed(2)}%`
-      };
-    } 
-    else if (tokenIn.toUpperCase() === "QUAI" && tokenOut.toUpperCase() === "QI") {
-      const qiToQuaiRate = parseInt(lastQiToQuaiRate || "0", 16) / 10 ** 18;
-      if (qiToQuaiRate === 0) return { amountOut: "0", effectiveRate: "0", slippage: "0%" };
-      
-      const quaiToQiRate = 1 / qiToQuaiRate;
-      
-      // First calculate raw conversion without slippage
-      const rawAmountOut = amountInDecimal * quaiToQiRate;
-      
-      // Then apply slippage by reducing output amount
-      const amountOut = rawAmountOut * (1 - slippagePercent / 100);
-      
-      return {
-        amountOut: amountOut.toFixed(6),
-        effectiveRate: (amountOut / amountInDecimal).toFixed(6),
-        slippage: `${slippagePercent.toFixed(2)}%`
-      };
+
+    // convert the bigint amount to hex value for all the apis
+    var amountInHex = '0x' + amountIn.toString(16);
+
+    var amountWithoutSlip;
+    if (direction === "quaiToQi") {
+      amountWithoutSlip = await fetchQuaiToQi(amountInHex);
+    } else {
+      amountWithoutSlip = await fetchQiToQuai(amountInHex);
     }
-    
-    throw new Error("Invalid token pair");
+
+    // Calculate dynamic slippage
+    const amountLeftAfterSlip = await fetchConversionAmountAfterSlip(amountInHex, direction);
+
+    function computeSlipPercent(
+      amountWithoutSlipHex: string,
+      amountLeftAfterSlipHex: string
+    ): number {
+      // 1) parse your hex strings into BigNumber
+      const withoutSlip = BigInt(amountWithoutSlipHex);
+      const leftAfter = BigInt(amountLeftAfterSlipHex);
+      
+      // 2) diff = withoutSlip - leftAfter
+      const diff = withoutSlip - leftAfter;
+
+      // 3) compute basis points = diff * 10000 / withoutSlip
+      //    (basis points = percent * 100)
+      const slipBp = diff * BigInt(10_000) / (withoutSlip);
+
+      // 4) convert basis points back into a JS number with two decimals:
+      return parseFloat(slipBp.toString()) / parseFloat(BigInt(100).toString());  // e.g. 1234 bp → 12.34%
+    }
+
+    // example usage:
+    const slip = computeSlipPercent(
+      amountWithoutSlip,    // e.g. "0x2386f26fc10000"  ( = 0.01×1e18 )
+      amountLeftAfterSlip   // e.g. "0x2308c5d4a10000"
+    );
+
+
+    var amountLeft;
+    if (direction === "quaiToQi") {
+      // convert the hex number into quai or qi uints by removing 18 decimals for quai and 3 for qi
+      amountLeft = parseInt(amountLeftAfterSlip, 16) / 10 ** 3;
+    } else {
+      amountLeft = parseInt(amountLeftAfterSlip, 16) / 10 ** 18;
+    }
+      
+
+    return {
+      amountOut: amountLeft,
+      effectiveRate: "0",
+      slippage: `${slip.toString()}%`
+    };
   } catch (error) {
     console.error("Error calculating conversion amount:", error);
     toast.error("Failed to calculate conversion. Please try again.");
