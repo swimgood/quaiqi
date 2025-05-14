@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { calculateConversionAmount } from "@/services/cryptoApi";
+import { parseUnits } from "ethers";
 
 interface CurrencyConverterProps {
   qiToQuaiRate?: string;
@@ -35,40 +36,33 @@ export function CurrencyConverter({
   });
   const [isCalculating, setIsCalculating] = useState(false);
 
-  // Get current slippage based on conversion direction
-  const getCurrentSlippage = () => {
-    return fromCurrency === "QUAI" 
-      ? SLIPPAGE_CONFIG.QUAI_TO_QI 
-      : SLIPPAGE_CONFIG.QI_TO_QUAI;
-  };
-
   // Calculate conversion when amount or currencies change
   useEffect(() => {
     const calculateConversion = async () => {
       if (amount && !isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
         setIsCalculating(true);
-        
+
         // Get conversion direction and slippage
         const direction = fromCurrency === "QUAI" ? "quaiToQi" : "qiToQuai";
-        const slippage = getCurrentSlippage();
-        
+
+        let amountForSlipCalculation;
+        if (direction === "quaiToQi") {
+          amountForSlipCalculation = parseUnits(amount, 18);
+        } else {
+          amountForSlipCalculation = parseUnits(amount, 3);
+        }
+
         // Call API with direction and slippage info
         const conversionResult = await calculateConversionAmount(
           fromCurrency,
-          toCurrency,
-          amount,
-          {
-            direction,
-            slippage
-          }
+          amountForSlipCalculation,
         );
-        
+
         // Update result with direction-specific slippage
         setResult({
           ...conversionResult,
-          slippage: `${slippage}%`,
         });
-        
+
         setIsCalculating(false);
       } else {
         setResult({
@@ -121,7 +115,7 @@ export function CurrencyConverter({
               </Button>
             </div>
           </div>
-          
+
           <div className="flex justify-center">
             <Button
               variant="ghost"
@@ -133,7 +127,7 @@ export function CurrencyConverter({
               <span className="sr-only">Swap currencies</span>
             </Button>
           </div>
-          
+
           <div className="space-y-2">
             <Label htmlFor="result">You Receive</Label>
             <div className="flex space-x-2">
@@ -156,15 +150,9 @@ export function CurrencyConverter({
               </Button>
             </div>
           </div>
-          
+
           <div className="mt-4 pt-4 border-t">
             <div className="text-sm space-y-2">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Effective Rate:</span>
-                <span className="font-medium">
-                  1 {fromCurrency} = {result.effectiveRate} {toCurrency}
-                </span>
-              </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Slippage:</span>
                 <span className="font-medium">
